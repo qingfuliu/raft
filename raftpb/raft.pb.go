@@ -72,14 +72,22 @@ func (EntryType) EnumDescriptor() ([]byte, []int) {
 type MessageType int32
 
 const (
-	MsgHup               MessageType = 0
-	MsgBeat              MessageType = 1
-	MsgProp              MessageType = 2
-	MsgApp               MessageType = 3
+	//本节点进行选举
+	MsgHup MessageType = 0
+	//leader发送给fowller的心跳
+	MsgBeat MessageType = 1
+	//接收到了来自客户端的一条写请求
+	MsgProp MessageType = 2
+	//leader向集群中的其他节点同步消息
+	MsgApp MessageType = 3
+	//上一条消息的应答
 	MsgAppResp           MessageType = 4
+	//候选人拉票
 	MsgVote              MessageType = 5
+	//拉票结果
 	MsgVoteResp          MessageType = 6
 	MsgSnap              MessageType = 7
+
 	MsgHeartbeat         MessageType = 8
 	MsgHeartbeatResp     MessageType = 9
 	MsgUnreachable       MessageType = 10
