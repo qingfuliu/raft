@@ -27,6 +27,33 @@ import (
 // NB(tbg): Progress is basically a state machine whose transitions are mostly
 // strewn around `*raft.raft`. Additionally, some fields are only used when in a
 // certain State. All of this isn't ideal.
+// +--------------------------------------------------------+
+// |                  send snapshot                         |
+// |                                                        |
+// +---------+----------+                                  +----------v---------+
+// +--->       probe        |                                  |      snapshot      |
+// |   |  max inflight = 1  <----------------------------------+  max inflight = 0  |
+// |   +---------+----------+                                  +--------------------+
+// |             |            1. snapshot success
+// |             |               (next=snapshot.index + 1)
+// |             |            2. snapshot failure
+// |             |               (no change)
+// |             |            3. receives msgAppResp(rej=false&&index>lastsnap.index)
+// |             |               (match=m.index,next=match+1)
+// receives msgAppResp(rej=true)
+// (next=match+1)|             |
+// |             |
+// |             |
+// |             |   receives msgAppResp(rej=false&&index>match)
+// |             |   (match=m.index,next=match+1)
+// |             |
+// |             |
+// |             |
+// |   +---------v----------+
+// |   |     replicate      |
+// +---+  max inflight = n  |
+// +--------------------+
+// https://xujiajiadexiaokeai.github.io/2021-10-28/progress-in-etcd/
 type Progress struct {
 	// Match is the index up to which the follower's log is known to match the
 	// leader's.
