@@ -295,20 +295,21 @@ type msgWithResult struct {
 
 // node is the canonical implementation of the Node interface
 type node struct {
-	propc      chan msgWithResult
-	recvc      chan pb.Message
+	propc      chan msgWithResult //接收客户端消息并且返回结果 的通道
+	recvc      chan pb.Message    //接收来自其他raft节点的消息 的通道
 	confc      chan pb.ConfChangeV2
 	confstatec chan pb.ConfState
-	readyc     chan Ready
-	advancec   chan struct{}
-	tickc      chan struct{}
-	done       chan struct{}
-	stop       chan struct{}
-	status     chan chan Status
+	readyc     chan Ready       //接收可以
+	advancec   chan struct{}    //接收一个消息，该消息说明该节点可以尝试推进Raft算法的状态机
+	tickc      chan struct{}    //逻辑时钟已经过去，需要执行定时任务
+	done       chan struct{}    //接收一个消息，该消息表示该节点已经完成了所有的Raft操作。
+	stop       chan struct{}    //该通道接收一个消息，该消息表示该节点已经停止工作
+	status     chan chan Status //
 
-	rn *RawNode
+	rn *RawNode //与raft算法进行交互
 }
 
+// make 所有的通道
 func newNode(rn *RawNode) node {
 	return node{
 		propc:      make(chan msgWithResult),
@@ -328,6 +329,7 @@ func newNode(rn *RawNode) node {
 	}
 }
 
+// 给node.stop节点发送一个消息
 func (n *node) Stop() {
 	select {
 	case n.stop <- struct{}{}:
@@ -455,6 +457,7 @@ func (n *node) run() {
 
 // Tick increments the internal logical clock for this Node. Election timeouts
 // and heartbeat timeouts are in units of ticks.
+// 将逻辑时钟前进一步，也就是向 node.tickc 写入一个消息
 func (n *node) Tick() {
 	select {
 	case n.tickc <- struct{}{}:
@@ -464,12 +467,34 @@ func (n *node) Tick() {
 	}
 }
 
+/*
+1.本节点接要进行选举
+
+	*将m写入到node.recvc //接收来自其他raft节点的消息 的通道（接收客户端消息并且返回结果 的通道）
+	*接收m的error消息，等待
+*/
 func (n *node) Campaign(ctx context.Context) error { return n.step(ctx, pb.Message{Type: pb.MsgHup}) }
 
+/*
+1.本节点接收到了来自客户端的一条写请求,有新的日志需要被提交 pb.MsgProp
+
+	*将m写入到n.propc（接收客户端消息并且返回结果 的通道）
+	*接收m的error消息，等待
+*/
 func (n *node) Propose(ctx context.Context, data []byte) error {
 	return n.stepWait(ctx, pb.Message{Type: pb.MsgProp, Entries: []pb.Entry{{Data: data}}})
 }
 
+/*
+使用指定的状态推进状态机
+
+		1.本节点接收到了来自客户端的一条写请求 pb.MsgProp
+			*将m写入到n.propc（接收客户端消息并且返回结果 的通道）
+			*不接收m的error消息，直接返回
+	    2.其他消息写入到n.recvc（接收来自其他raft节点的消息 的通道）
+
+在进行上面的步骤时，无论ctx出现error还是n.done出现消息，都需要结束操作
+*/
 func (n *node) Step(ctx context.Context, m pb.Message) error {
 	// Ignore unexpected local messages receiving over network.
 	if IsLocalMsg(m.Type) && !IsLocalMsgTarget(m.From) {
@@ -487,6 +512,13 @@ func confChangeToMsg(c pb.ConfChangeI) (pb.Message, error) {
 	return pb.Message{Type: pb.MsgProp, Entries: []pb.Entry{{Type: typ, Data: data}}}, nil
 }
 
+/*
+配置更改，将cc pb.ConfChangeI转化成数组，执行以下操作
+1.本节点接收到了来自客户端的一条写请求,有新的日志需要被提交 pb.MsgProp（就是cc pb.ConfChangeI）
+
+	*将m写入到n.propc（接收客户端消息并且返回结果 的通道）
+	*接收m的error消息，等待
+*/
 func (n *node) ProposeConfChange(ctx context.Context, cc pb.ConfChangeI) error {
 	msg, err := confChangeToMsg(cc)
 	if err != nil {
@@ -495,16 +527,38 @@ func (n *node) ProposeConfChange(ctx context.Context, cc pb.ConfChangeI) error {
 	return n.Step(ctx, msg)
 }
 
+/*
+		1.本节点接收到了来自客户端的一条写请求 pb.MsgProp
+			*将m写入到n.propc（接收客户端消息并且返回结果 的通道）
+			*不接收m的error消息，直接返回
+	    2.其他消息写入到n.recvc（接收来自其他raft节点的消息 的通道）
+
+在进行上面的步骤时，无论ctx出现error还是n.done出现消息，都需要结束操作
+*/
 func (n *node) step(ctx context.Context, m pb.Message) error {
 	return n.stepWithWaitOption(ctx, m, false)
 }
 
+/*
+		1.本节点接收到了来自客户端的一条写请求 pb.MsgProp
+			*将m写入到n.propc（接收客户端消息并且返回结果 的通道）
+			*接收m的error消息，如果错误，需要爆出
+	    2.其他消息写入到n.recvc（接收来自其他raft节点的消息 的通道）
+
+在进行上面的步骤时，无论ctx出现error还是n.done出现消息，都需要结束操作
+*/
 func (n *node) stepWait(ctx context.Context, m pb.Message) error {
 	return n.stepWithWaitOption(ctx, m, true)
 }
 
 // Step advances the state machine using msgs. The ctx.Err() will be returned,
-// if any.
+/*
+	1.本节点接收到了来自客户端的一条写请求 pb.MsgProp
+		*将m写入到n.propc（接收客户端消息并且返回结果 的通道）
+		*接收m的error消息，如果错误，需要爆出
+    2.其他消息写入到n.recvc（接收来自其他raft节点的消息 的通道）
+在进行上面的步骤时，无论ctx出现error还是n.done出现消息，都需要结束操作
+*/
 func (n *node) stepWithWaitOption(ctx context.Context, m pb.Message, wait bool) error {
 	if m.Type != pb.MsgProp {
 		select {
@@ -516,11 +570,13 @@ func (n *node) stepWithWaitOption(ctx context.Context, m pb.Message, wait bool) 
 			return ErrStopped
 		}
 	}
+
 	ch := n.propc
 	pm := msgWithResult{m: m}
 	if wait {
 		pm.result = make(chan error, 1)
 	}
+
 	select {
 	case ch <- pm:
 		if !wait {
@@ -531,6 +587,7 @@ func (n *node) stepWithWaitOption(ctx context.Context, m pb.Message, wait bool) 
 	case <-n.done:
 		return ErrStopped
 	}
+
 	select {
 	case err := <-pm.result:
 		if err != nil {
@@ -541,6 +598,7 @@ func (n *node) stepWithWaitOption(ctx context.Context, m pb.Message, wait bool) 
 	case <-n.done:
 		return ErrStopped
 	}
+
 	return nil
 }
 
@@ -576,6 +634,10 @@ func (n *node) Status() Status {
 	}
 }
 
+/*
+*
+说明索引为id的node不通
+*/
 func (n *node) ReportUnreachable(id uint64) {
 	select {
 	case n.recvc <- pb.Message{Type: pb.MsgUnreachable, From: id}:
@@ -592,6 +654,10 @@ func (n *node) ReportSnapshot(id uint64, status SnapshotStatus) {
 	}
 }
 
+/*
+*
+将领导权利从lead转让给transferee
+*/
 func (n *node) TransferLeadership(ctx context.Context, lead, transferee uint64) {
 	select {
 	// manually set 'from' and 'to', so that leader can voluntarily transfers its leadership
@@ -601,6 +667,11 @@ func (n *node) TransferLeadership(ctx context.Context, lead, transferee uint64) 
 	}
 }
 
+/*
+*
+忘记原来的领导者
+向上层应用pb.MsgForgetLeader消息
+*/
 func (n *node) ForgetLeader(ctx context.Context) error {
 	return n.step(ctx, pb.Message{Type: pb.MsgForgetLeader})
 }

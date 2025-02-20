@@ -72,25 +72,24 @@ func (EntryType) EnumDescriptor() ([]byte, []int) {
 type MessageType int32
 
 const (
-	//本节点进行选举
-	MsgHup MessageType = 0
-	//leader发送给fowller的心跳
-	MsgBeat MessageType = 1
-	//接收到了来自客户端的一条写请求
-	MsgProp MessageType = 2
-	//leader向集群中的其他节点同步消息
-	MsgApp MessageType = 3
+	MsgHup MessageType = 0 //本节点进行选举
+
+	MsgBeat MessageType = 1 //leader发送给fowller的心跳
+
+	MsgProp MessageType = 2 //客户端请求，有新的日志需要被提交
+
+	MsgApp MessageType = 3 //leader向集群中的其他节点同步消息
 	//上一条消息的应答
-	MsgAppResp           MessageType = 4
+	MsgAppResp MessageType = 4
 	//候选人拉票
-	MsgVote              MessageType = 5
+	MsgVote MessageType = 5
 	//拉票结果
-	MsgVoteResp          MessageType = 6
-	MsgSnap              MessageType = 7
+	MsgVoteResp MessageType = 6
+	MsgSnap     MessageType = 7
 
 	MsgHeartbeat         MessageType = 8
 	MsgHeartbeatResp     MessageType = 9
-	MsgUnreachable       MessageType = 10
+	MsgUnreachable       MessageType = 10 //某个节点不可达
 	MsgSnapStatus        MessageType = 11
 	MsgCheckQuorum       MessageType = 12
 	MsgTransferLeader    MessageType = 13
@@ -103,7 +102,7 @@ const (
 	MsgStorageAppendResp MessageType = 20
 	MsgStorageApply      MessageType = 21
 	MsgStorageApplyResp  MessageType = 22
-	MsgForgetLeader      MessageType = 23
+	MsgForgetLeader      MessageType = 23 //忘记原来的领导者
 )
 
 var MessageType_name = map[int32]string{
