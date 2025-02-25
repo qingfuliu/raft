@@ -85,6 +85,10 @@ func (env *InteractionEnv) withIndent(f func()) {
 type Storage interface {
 	raft.Storage
 	SetHardState(state pb.HardState) error
+	/**
+	将快照应用到log，新快照必须比旧快照新
+	overwrites（抛弃原先的快照和日志）
+	*/
 	ApplySnapshot(pb.Snapshot) error
 	Compact(newFirstIndex uint64) error
 	Append([]pb.Entry) error

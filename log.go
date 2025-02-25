@@ -30,6 +30,9 @@ type raftLog struct {
 
 	// committed is the highest log position that is known to be in
 	// stable storage on a quorum of nodes.
+	/**
+	在该节点所知数量达到quorum的节点保存到了稳定存储中的日志里index最高的日志的index。
+	*/
 	committed uint64
 	// applying is the highest log position that the application has
 	// been instructed to apply to its state machine. Some of these
@@ -37,6 +40,9 @@ type raftLog struct {
 	// reached applied.
 	// Use: The field is incremented when accepting a Ready struct.
 	// Invariant: applied <= applying && applying <= committed
+	/**
+	在该节点的应用程序已应用到其状态机的日志里，index最高的日志的index。 其中， applied <= committed 总是成立的。
+	*/
 	applying uint64
 	// applied is the highest log position that the application has
 	// successfully applied to its state machine.
@@ -104,6 +110,13 @@ func (l *raftLog) String() string {
 
 // maybeAppend returns (0, false) if the entries cannot be appended. Otherwise,
 // it returns (last index of new entries, true).
+/**
+check：
+1.prev.term == a[prev.index].term
+2.findConflict  |   findConflict log  |                   |
+             a[0].index      a[findConflict].index
+            findConflict log 需要被去掉
+*/
 func (l *raftLog) maybeAppend(a logSlice, committed uint64) (lastnewi uint64, ok bool) {
 	if !l.matchTerm(a.prev) {
 		return 0, false
@@ -193,12 +206,18 @@ func (l *raftLog) findConflictByTerm(index uint64, term uint64) (uint64, uint64)
 
 // nextUnstableEnts returns all entries that are available to be written to the
 // local stable log and are not already in-progress.
+/**
+返回unstable中inprogress后面的第一个
+*/
 func (l *raftLog) nextUnstableEnts() []pb.Entry {
 	return l.unstable.nextEntries()
 }
 
 // hasNextUnstableEnts returns if there are any entries that are available to be
 // written to the local stable log and are not already in-progress.
+/**
+返回unstable是否有没有在inprocsser中的日志
+*/
 func (l *raftLog) hasNextUnstableEnts() bool {
 	return len(l.nextUnstableEnts()) > 0
 }
@@ -206,6 +225,9 @@ func (l *raftLog) hasNextUnstableEnts() bool {
 // hasNextOrInProgressUnstableEnts returns if there are any entries that are
 // available to be written to the local stable log or in the process of being
 // written to the local stable log.
+/**
+返回unstable中是否有日志
+*/
 func (l *raftLog) hasNextOrInProgressUnstableEnts() bool {
 	return len(l.unstable.entries) > 0
 }
@@ -262,6 +284,10 @@ func (l *raftLog) hasNextCommittedEnts(allowUnstable bool) bool {
 // If allowUnstable is true, committed entries from the unstable log can be
 // applied; otherwise, only entries known to reside locally on stable storage
 // can be applied.
+/**
+返回该节点允许的最大的可以提交的日志index
+如果标记了allowUnstable，那么index大小不能超过l.unstable.offset-1
+*/
 func (l *raftLog) maxAppliableIndex(allowUnstable bool) uint64 {
 	hi := l.committed
 	if !allowUnstable {
@@ -295,6 +321,11 @@ func (l *raftLog) snapshot() (pb.Snapshot, error) {
 	return l.storage.Snapshot()
 }
 
+/*
+*
+1、根据unstable的快照进行寻找 unstable.snapshot.Metadata.Index + 1,
+2、根据storage寻找，l.storage.FirstIndex()
+*/
 func (l *raftLog) firstIndex() uint64 {
 	if i, ok := l.unstable.maybeFirstIndex(); ok {
 		return i
@@ -499,6 +530,11 @@ func (l *raftLog) scan(lo, hi uint64, pageSize entryEncodingSize, v func([]pb.En
 }
 
 // slice returns a slice of log entries from lo through hi-1, inclusive.
+/**
+返回lo-hi之间的日志
+前半段在stoage中
+后半段在unstable中
+*/
 func (l *raftLog) slice(lo, hi uint64, maxSize entryEncodingSize) ([]pb.Entry, error) {
 	if err := l.mustCheckOutOfBounds(lo, hi); err != nil {
 		return nil, err
