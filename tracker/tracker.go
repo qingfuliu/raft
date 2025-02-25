@@ -114,14 +114,31 @@ func (c *Config) Clone() Config {
 // ProgressTracker tracks the currently active configuration and the information
 // known about the nodes and learners in it. In particular, it tracks the match
 // index for each peer which in turn allows reasoning about the committed index.
+
+/*
+1.Progress代表了Leader视角的Follower进度，Leader拥有所有Follower的进度，并根据其进度向Follower发送日志。
+2.作为Leader，需要知道所有Peer已经同步到什么程度了，所以就有了Progress。比如Leader已经有10条日志，Leader需要把这10条日志发给所有的Peer，那么Leader就需要记录Peer1已经发送到了第3条，Peer2已经发送到了第4条，以此类推。
+*/
 type ProgressTracker struct {
 	Config
 
+	/**
+	用来跟踪每个节点的复制状态，key是节点的id，value是节点的复制状态，包含某个节点的角色，日志位置等等
+	*/
 	Progress ProgressMap
 
+	/**
+	对应的节点是否为自己投票，在进行节点选举时候，记录节点情况的
+	*/
 	Votes map[uint64]bool
 
-	MaxInflight      int
+	/**
+	最多允许多少个msg append 信息发送了但是还没回复，用来控制发送量
+	*/
+	MaxInflight int
+	/**
+	同MaxInflight，用来控制发送的字节数
+	*/
 	MaxInflightBytes uint64
 }
 

@@ -363,6 +363,9 @@ type raft struct {
 	// other nodes.
 	//
 	// Messages in this list must target other nodes.
+	/*
+	   message列表，只能发送给其他节点，不能发送给本机
+	*/
 	msgs []pb.Message
 	// msgsAfterAppend contains the list of messages that should be sent after
 	// the accumulated unstable state (e.g. term, vote, []entry, and snapshot)
@@ -374,6 +377,12 @@ type raft struct {
 	//
 	// Messages in this list have the type MsgAppResp, MsgVoteResp, or
 	// MsgPreVoteResp. See the comment in raft.send for details.
+
+	/*
+		包含了 在收集的持久化日志持久化到存储之后 ，应该发送的 Message
+		MsgAppResp，MsgVoteResp， MsgPreVoteResp
+		有可能发送给本机
+	*/
 	msgsAfterAppend []pb.Message
 
 	// the leader id
@@ -497,8 +506,15 @@ func newRaft(c *Config) *raft {
 
 func (r *raft) hasLeader() bool { return r.lead != None }
 
+/*
+ */
 func (r *raft) softState() SoftState { return SoftState{Lead: r.lead, RaftState: r.state} }
 
+/*
+votefor
+entrys
+term(r.raftLog.committed)
+*/
 func (r *raft) hardState() pb.HardState {
 	return pb.HardState{
 		Term:   r.Term,
@@ -509,6 +525,18 @@ func (r *raft) hardState() pb.HardState {
 
 // send schedules persisting state to a stable storage and AFTER that
 // sending the message (as part of next Ready message processing).
+
+/*
+// @Title send
+// @Description
+
+			1.check
+		       m.Term==0 m.Type == pb.MsgVote || m.Type == pb.MsgVoteResp || m.Type == pb.MsgPreVote || m.Type == pb.MsgPreVoteResp
+	           m.Term != 0 other type
+			2.set Term , m.Type != pb.MsgProp && m.Type != pb.MsgReadIndex
+
+// @Param m
+*/
 func (r *raft) send(m pb.Message) {
 	if m.From == None {
 		m.From = r.id
