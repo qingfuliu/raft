@@ -51,6 +51,9 @@ type unstable struct {
 
 // maybeFirstIndex returns the index of the first possible entry in entries
 // if it has a snapshot.
+/*
+u.snapshot.Metadata.Index + 1
+*/
 func (u *unstable) maybeFirstIndex() (uint64, bool) {
 	if u.snapshot != nil {
 		return u.snapshot.Metadata.Index + 1, true
@@ -60,6 +63,10 @@ func (u *unstable) maybeFirstIndex() (uint64, bool) {
 
 // maybeLastIndex returns the last index if it has at least one
 // unstable entry or snapshot.
+/*
+1.offset + len(entries)- 1
+2.u.snapshot.Metadata.Index
+*/
 func (u *unstable) maybeLastIndex() (uint64, bool) {
 	if l := len(u.entries); l != 0 {
 		return u.offset + uint64(l) - 1, true
@@ -72,6 +79,15 @@ func (u *unstable) maybeLastIndex() (uint64, bool) {
 
 // maybeTerm returns the term of the entry at index i, if there
 // is any.
+/*
+1.i>offset && i<offset + len(entries) return   offset + len(entries)- 1
+2.i<offset && u.snapshot != nil return u.snapshot.Metadata.Index
+3.返回空的情况：
+i太小。i已经被保存在快照里，并且快照最后一个不是i（无法记录i对应的term）
+i太大，在这个快照里不存在
+日志是空：ents是空并且快照是空
+
+*/
 func (u *unstable) maybeTerm(i uint64) (uint64, bool) {
 	if i < u.offset {
 		if u.snapshot != nil && u.snapshot.Metadata.Index == i {
@@ -93,6 +109,9 @@ func (u *unstable) maybeTerm(i uint64) (uint64, bool) {
 
 // nextEntries returns the unstable entries that are not already in the process
 // of being written to storage.
+/*
+return u.offsetInProgress - u.offset
+*/
 func (u *unstable) nextEntries() []pb.Entry {
 	inProgress := int(u.offsetInProgress - u.offset)
 	if len(u.entries) == inProgress {
@@ -103,6 +122,9 @@ func (u *unstable) nextEntries() []pb.Entry {
 
 // nextSnapshot returns the unstable snapshot, if one exists that is not already
 // in the process of being written to storage.
+/*
+u.snapshot != nil || nil==u.snapshotInProgress return u.snapshot
+*/
 func (u *unstable) nextSnapshot() *pb.Snapshot {
 	if u.snapshot == nil || u.snapshotInProgress {
 		return nil
@@ -115,6 +137,9 @@ func (u *unstable) nextSnapshot() *pb.Snapshot {
 // will no longer be returned from nextEntries/nextSnapshot. However, new
 // entries/snapshots added after a call to acceptInProgress will be returned
 // from those methods, until the next call to acceptInProgress.
+/*
+将所有的日志标记为Progress
+*/
 func (u *unstable) acceptInProgress() {
 	if len(u.entries) > 0 {
 		// NOTE: +1 because offsetInProgress is exclusive, like offset.
@@ -131,6 +156,13 @@ func (u *unstable) acceptInProgress() {
 // The method should only be called when the caller can attest that the entries
 // can not be overwritten by an in-progress log append. See the related comment
 // in newStorageAppendRespMsg.
+/**
+将id之前的日志都标记为已经写入到稳定存储
+	num := int(id.index + 1 - u.offset)
+	u.entries = u.entries[num:] 更新日志
+	u.offset = id.index + 1 更新offset
+	u.offsetInProgress = max(u.offsetInProgress, u.offset)//更新处理阶段
+*/
 func (u *unstable) stableTo(id entryID) {
 	gt, ok := u.maybeTerm(id.index)
 	if !ok {
@@ -178,6 +210,11 @@ func (u *unstable) shrinkEntriesArray() {
 	}
 }
 
+/*
+将i之前的日志都标记为写入，当条件是u.snapshot.Metadata.Index == i（表示快照之前的都已经写入时）
+u.snapshot = nil
+u.snapshotInProgress = false
+*/
 func (u *unstable) stableSnapTo(i uint64) {
 	if u.snapshot != nil && u.snapshot.Metadata.Index == i {
 		u.snapshot = nil
@@ -185,6 +222,9 @@ func (u *unstable) stableSnapTo(i uint64) {
 	}
 }
 
+/*
+将快照设置为s
+*/
 func (u *unstable) restore(s pb.Snapshot) {
 	u.offset = s.Metadata.Index + 1
 	u.offsetInProgress = u.offset
@@ -193,6 +233,13 @@ func (u *unstable) restore(s pb.Snapshot) {
 	u.snapshotInProgress = false
 }
 
+/*
+append
+or
+replace
+or
+replace and append
+*/
 func (u *unstable) truncateAndAppend(ents []pb.Entry) {
 	fromIndex := ents[0].Index
 	switch {

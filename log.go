@@ -382,6 +382,11 @@ func (l *raftLog) lastEntryID() entryID {
 	return entryID{term: t, index: index}
 }
 
+/*
+*
+首先在unstable里面找
+然后再在storage里面找
+*/
 func (l *raftLog) term(i uint64) (uint64, error) {
 	// Check the unstable log first, even before computing the valid term range,
 	// which may need to access stable Storage. If we find the entry's term in
