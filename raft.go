@@ -396,6 +396,12 @@ type raft struct {
 	// configuration change (if any). Config changes are only allowed to
 	// be proposed if the leader's applied index is greater than this
 	// value.
+
+	/*
+		同一时间只能有一个配置变更处于待处理状态（已记录在日志中，但尚未应用）。
+		这是通过 pendingConfIndex 来保证的，该值会被设置为大于或等于最新待处理配置变更的日志索引（如果存在待处理变更的话）。
+		仅当领导者的已应用索引大于该值时，才允许发起配置变更提议。
+	*/
 	pendingConfIndex uint64
 	// disableConfChangeValidation is Config.DisableConfChangeValidation,
 	// see there for details.
@@ -533,7 +539,13 @@ func (r *raft) hardState() pb.HardState {
 			1.check
 		       m.Term==0 m.Type == pb.MsgVote || m.Type == pb.MsgVoteResp || m.Type == pb.MsgPreVote || m.Type == pb.MsgPreVoteResp
 	           m.Term != 0 other type
-			2.set Term , m.Type != pb.MsgProp && m.Type != pb.MsgReadIndex
+
+视为			2.set Term , m.Type != pb.MsgProp && m.Type != pb.MsgReadIndex,前两者视为local message
+
+	3.append
+		对于投票响应message、预投票响应message、append响应message。append m到msgsAfterAppend。
+		因为投票响应message、预投票响应message必须等待voteFor字段被持久化后才能发送。append响应message必须等日志被持久化后才能响应
+		否则append到msgs
 
 // @Param m
 */
@@ -584,7 +596,11 @@ func (r *raft) send(m pb.Message) {
 		// synced to stable storage locally.
 		//
 		// Per the Raft thesis, section 3.8 Persisted state and server restarts:
-		//
+		//Raft服务器必须将足够的信息保存到稳定的存储中，以确保服务器重启后安全运行。
+		//特别是，每个服务器保留其当前任期和投票；
+		//这是必要的，以防止服务器在同一任期内投票两次，或者用被罢免的领导者的日志条目替换新领导者的日志条目。
+		//每个服务器还在将新的日志条目计入条目的承诺之前持久化它们；
+		//这可以防止在服务器重新启动时丢失或“未提交”已提交的条目
 		// > Raft servers must persist enough information to stable storage to
 		// > survive server restarts safely. In particular, each server persists
 		// > its current term and vote; this is necessary to prevent the server
@@ -593,7 +609,9 @@ func (r *raft) send(m pb.Message) {
 		// > persists new log entries before they are counted towards the entries’
 		// > commitment; this prevents committed entries from being lost or
 		// > “uncommitted” when servers restart
-		//
+		//为了强制执行此持久性要求，这些响应消息会被排队等待发送，直到当前不稳定状态（响应消息所依据的状态）已被持久保存。
+		//这种不稳定状态可能已经传递给正在持久化的 Ready 结构体，或者可能正在等待下一个 Ready 结构体开始写入存储。
+		//这些消息必须等待所有这些状态都持久化之后才能发布。
 		// To enforce this durability requirement, these response messages are
 		// queued to be sent out as soon as the current collection of unstable
 		// state (the state that the response message was predicated upon) has
@@ -602,7 +620,11 @@ func (r *raft) send(m pb.Message) {
 		// waiting for the next Ready struct to begin being written to Storage.
 		// These messages must wait for all of this state to be durable before
 		// being published.
-		//
+		//被拒绝的响应（m.Reject == true）提供了一个有趣的情况，其中持久性要求不太明确。拒绝可能是基于不稳定的状态。
+		//例如，一个节点可能会拒绝为一个对等节点投票，因为它已经开始为另一个对等节点同步投票。
+		//或者它可能会拒绝来自一个对等节点的投票，因为它有不稳定的日志条目，表明该对等节点的日志落后。
+		//在这些情况下，立即发送拒绝响应可能是安全的，即使服务器重新启动也不会影响安全性。
+		//然而，由于这些拒绝情况很少见，并且这种行为的安全性尚未经过正式验证，所以我们倾向于安全起见，在上面省略了 `&& ！m.Reject` 条件。
 		// Rejected responses (m.Reject == true) present an interesting case
 		// where the durability requirement is less unambiguous. A rejection may
 		// be predicated upon unstable state. For instance, a node may reject a
@@ -628,6 +650,7 @@ func (r *raft) send(m pb.Message) {
 
 // sendAppend sends an append RPC with new entries (if any) and the
 // current commit index to the given peer.
+// sendAppend 向给定的对等节点发送带有新条目（如果有）和当前提交索引的追加 RPC。调用 maybeSendAppend
 func (r *raft) sendAppend(to uint64) {
 	r.maybeSendAppend(to, true)
 }
@@ -641,6 +664,18 @@ func (r *raft) sendAppend(to uint64) {
 // TODO(pav-kv): make invocation of maybeSendAppend stateless. The Progress
 // struct contains all the state necessary for deciding whether to send a
 // message.
+
+/*
+maybeSendAppend 函数在必要时会向给定的对等节点发送包含新日志项的追加远程过程调用（RPC）。
+如果成功发送了消息，则返回 true。
+sendIfEmpty 参数控制是否发送不包含日志项的消息（“空” 消息对于传达已更新的提交索引很有用，但当我们批量发送多条消息时，这类消息并不理想）。
+
+1、获取对应id的Progress（pr = r.trk.Progress[to]）
+2、如果发送被阻塞了（pr.IsPaused()，有太多消息阻塞在里面），那么直接返回false
+3、否则，获取该节点所需日志的上一条日志的index和term。如果error，发送快照
+4、从next开始，向后发送。但必须不满足：节点处于复制状态、该节点被限流并且
+5.更新pr的状态，主要是commit和next
+*/
 func (r *raft) maybeSendAppend(to uint64, sendIfEmpty bool) bool {
 	pr := r.trk.Progress[to]
 	if pr.IsPaused() {
@@ -650,6 +685,7 @@ func (r *raft) maybeSendAppend(to uint64, sendIfEmpty bool) bool {
 	prevIndex := pr.Next - 1
 	prevTerm, err := r.raftLog.term(prevIndex)
 	if err != nil {
+		//取而代之的是发送一个快照。
 		// The log probably got truncated at >= pr.Next, so we can't catch up the
 		// follower log anymore. Send a snapshot instead.
 		return r.maybeSendSnapshot(to, pr)
@@ -689,6 +725,15 @@ func (r *raft) maybeSendAppend(to uint64, sendIfEmpty bool) bool {
 
 // maybeSendSnapshot fetches a snapshot from Storage, and sends it to the given
 // node. Returns true iff the snapshot message has been emitted successfully.
+
+/*
+某个节点无法获取他所需要的日志，因为日志已经被压缩为快照，因此调用
+maybeSendSnapshot 函数从存储（Storage）中获取快照。
+maybeSendSnapshot将快照发送给指定的节点。当且仅当快照消息成功发出时，该函数返回 true。
+1、如果!pr.RecentActive，reture false
+2、获取快照，首先在unstable中获取，获取不到在storage中获取
+3、将pr转换为MsgSnap状态:设置next为Snap.next+1,pr.PendingSnapshot = snapshoti,pr.commit = Snap.next
+*/
 func (r *raft) maybeSendSnapshot(to uint64, pr *tracker.Progress) bool {
 	if !pr.RecentActive {
 		r.logger.Debugf("ignore sending snapshot to %x since it is not recently active", to)
@@ -717,6 +762,11 @@ func (r *raft) maybeSendSnapshot(to uint64, pr *tracker.Progress) bool {
 }
 
 // sendHeartbeat sends a heartbeat RPC to the given peer.
+
+/*
+获取commit := min(pr.Match, r.raftLog.committed)，带上ctx
+发送给id为to的节点
+*/
 func (r *raft) sendHeartbeat(to uint64, ctx []byte) {
 	pr := r.trk.Progress[to]
 	// Attach the commit as min(to.matched, r.committed).
@@ -737,6 +787,10 @@ func (r *raft) sendHeartbeat(to uint64, ctx []byte) {
 
 // bcastAppend sends RPC, with entries to all peers that are not up-to-date
 // according to the progress recorded in r.trk.
+
+/*
+循环每一个节点，调用r.sendAppend(id)
+*/
 func (r *raft) bcastAppend() {
 	r.trk.Visit(func(id uint64, _ *tracker.Progress) {
 		if id == r.id {
@@ -747,6 +801,10 @@ func (r *raft) bcastAppend() {
 }
 
 // bcastHeartbeat sends RPC, without entries to all the peers.
+
+/*
+循环每一个节点，调用 r.sendHeartbeat(id, ctx) ，也就是r.bcastHeartbeatWithCtx([]byte(lastCtx))，带上 r.readOnly.lastPendingRequestCtx() 最新的一个提议的最前面的entry。data
+*/
 func (r *raft) bcastHeartbeat() {
 	lastCtx := r.readOnly.lastPendingRequestCtx()
 	if len(lastCtx) == 0 {
@@ -756,6 +814,9 @@ func (r *raft) bcastHeartbeat() {
 	}
 }
 
+/*
+对于每个节点，循环调用r.sendHeartbeat(id, ctx)
+*/
 func (r *raft) bcastHeartbeatWithCtx(ctx []byte) {
 	r.trk.Visit(func(id uint64, _ *tracker.Progress) {
 		if id == r.id {
@@ -765,6 +826,9 @@ func (r *raft) bcastHeartbeatWithCtx(ctx []byte) {
 	})
 }
 
+/*
+将raftLog的applied调整为index.表示该节点应用index到状态机里
+*/
 func (r *raft) appliedTo(index uint64, size entryEncodingSize) {
 	oldApplied := r.raftLog.applied
 	newApplied := max(index, oldApplied)
@@ -776,6 +840,11 @@ func (r *raft) appliedTo(index uint64, size entryEncodingSize) {
 		// nil Data which unmarshals into an empty ConfChangeV2 and has the
 		// benefit that appendEntry can never refuse it based on its size
 		// (which registers as zero).
+		/*
+				如果当前（并且至少在当前领导者任期内是最近的）配置应该自动退出联合状态，那么现在就启动该操作。我们使用 nil 作为 Data，
+			它会被反序列化为一个空的 ConfChangeV2，这样做的好处是 appendEntry 永远不会基于其大小（大小被视为零）拒绝它。
+		*/
+		//TODO(calyqfliu):commit it
 		m, err := confChangeToMsg(nil)
 		if err != nil {
 			panic(err)
@@ -794,6 +863,9 @@ func (r *raft) appliedTo(index uint64, size entryEncodingSize) {
 	}
 }
 
+/*
+首先调用r.raftLog.stableSnapTo(index)将快照持久化到存储，然后调用r.appliedTo(index,0）更新raftlog的appild索引
+*/
 func (r *raft) appliedSnap(snap *pb.Snapshot) {
 	index := snap.Metadata.Index
 	r.raftLog.stableSnapTo(index)

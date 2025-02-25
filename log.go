@@ -30,6 +30,7 @@ type raftLog struct {
 
 	// committed is the highest log position that is known to be in
 	// stable storage on a quorum of nodes.
+
 	/**
 	在该节点所知数量达到quorum的节点保存到了稳定存储中的日志里index最高的日志的index。
 	*/
@@ -40,6 +41,7 @@ type raftLog struct {
 	// reached applied.
 	// Use: The field is incremented when accepting a Ready struct.
 	// Invariant: applied <= applying && applying <= committed
+
 	/**
 	在该节点的应用程序已应用到其状态机的日志里，index最高的日志的index。 其中， applied <= committed 总是成立的。
 	*/
@@ -314,6 +316,10 @@ func (l *raftLog) hasNextOrInProgressSnapshot() bool {
 	return l.unstable.snapshot != nil
 }
 
+/*
+如果l.unstable.snapshot不为空，获得之
+否则，获取l.storage.Snapshot
+*/
 func (l *raftLog) snapshot() (pb.Snapshot, error) {
 	if l.unstable.snapshot != nil {
 		return *l.unstable.snapshot, nil
@@ -358,6 +364,14 @@ func (l *raftLog) commitTo(tocommit uint64) {
 	}
 }
 
+/*
+	l.committed < i || i < l.applied：panic，因为i不能大于commit并且不能小于已经提交的索引
+
+将raftLog的applied调整到i
+此时可以调整l.applying = max(l.applying, i)
+l.applyingEntsSize -= size
+l.applyingEntsPaused = l.applyingEntsSize >= l.maxApplyingEntsSize
+*/
 func (l *raftLog) appliedTo(i uint64, size entryEncodingSize) {
 	if l.committed < i || i < l.applied {
 		l.logger.Panicf("applied(%d) is out of range [prevApplied(%d), committed(%d)]", i, l.applied, l.committed)
@@ -446,6 +460,13 @@ func (l *raftLog) term(i uint64) (uint64, error) {
 	panic(err) // TODO(bdarnell)
 }
 
+/*
+*
+/**
+返回以index为i的日志作为起点，最大字节数为maxSize的日志条目。有可能是全部的日志条目
+前半段在stoage中
+后半段在unstable中
+*/
 func (l *raftLog) entries(i uint64, maxSize entryEncodingSize) ([]pb.Entry, error) {
 	if i > l.lastIndex() {
 		return nil, nil

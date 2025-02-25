@@ -30,6 +30,11 @@ type Config struct {
 	// incoming configuration should be carried out automatically by Raft when
 	// this is possible. If false, the configuration will be joint until the
 	// application initiates the transition manually.
+
+	/*
+			如果当前配置处于联合共识状态，并且当条件允许时，Raft 应该自动执行向新配置的转换，那么 AutoLeave 为 true。
+		如果为 false，则配置将保持联合共识状态，直到应用程序手动发起向新配置的转换。
+	*/
 	AutoLeave bool
 	// Learners is a set of IDs corresponding to the learners active in the
 	// current configuration.

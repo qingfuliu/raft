@@ -184,6 +184,10 @@ func (u *unstable) shrinkEntriesArray() {
 	}
 }
 
+/*
+*
+表示已经将结束索引为i的持久化到存储
+*/
 func (u *unstable) stableSnapTo(i uint64) {
 	if u.snapshot != nil && u.snapshot.Metadata.Index == i {
 		u.snapshot = nil
