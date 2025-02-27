@@ -127,7 +127,7 @@ type Progress struct {
 	// case the follower does not erroneously remain in StateSnapshot.
 	/*
 			PendingSnapshot 用于 StateSnapshot，
-		    当领导者意识到这个节点需要一个索引时候，用于跟踪最新日志的index。这与从 raft 发出的 MsgSnap 消息中的索引相匹配。
+		    当领导者意识到这个节点需要一个快照时候，用于跟踪最新日志的index。这与从 raft 发出的 MsgSnap 消息中的索引相匹配。
 			当有待处理的快照时，向跟随者的复制将暂停。
 			如果领导者从其收到 MsgAppResp（当跟随者应用快照时会发出这样的 MsgAppResp)，将跟随者重新连接到领导者的日志（转换为StateReplicate）
 	*/
