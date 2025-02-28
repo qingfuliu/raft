@@ -112,12 +112,16 @@ func (l *raftLog) String() string {
 
 // maybeAppend returns (0, false) if the entries cannot be appended. Otherwise,
 // it returns (last index of new entries, true).
-/**
+
+/*
+*
+leader向follower复制日志条目时，follower调用maybeAppend
 check：
 1.prev.term == a[prev.index].term
 2.findConflict  |   findConflict log  |                   |
-             a[0].index      a[findConflict].index
-            findConflict log 需要被去掉
+
+	 a[0].index      a[findConflict].index
+	findConflict log 需要被去掉
 */
 func (l *raftLog) maybeAppend(a logSlice, committed uint64) (lastnewi uint64, ok bool) {
 	if !l.matchTerm(a.prev) {
