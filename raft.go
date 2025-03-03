@@ -881,6 +881,14 @@ func (r *raft) maybeCommit() bool {
 	return r.raftLog.maybeCommit(entryID{term: r.Term, index: r.trk.Committed()})
 }
 
+/*
+1、设置term，重新设置Vote
+2、重置lead
+3、重置选举、心跳过期次数
+4、重新设置r.trk.Votes
+5、重新设置所有的Progress
+5、重新设置有关read only的字段
+*/
 func (r *raft) reset(term uint64) {
 	if r.Term != term {
 		r.Term = term
@@ -913,8 +921,7 @@ func (r *raft) reset(term uint64) {
 }
 
 /*
-*
-将esappend到非稳定存储中
+将es append到非稳定存储中
 */
 func (r *raft) appendEntry(es ...pb.Entry) (accepted bool) {
 	li := r.raftLog.lastIndex()
@@ -941,8 +948,9 @@ func (r *raft) appendEntry(es ...pb.Entry) (accepted bool) {
 	// response message will be added to msgsAfterAppend and delivered back to
 	// this node after these entries have been written to stable storage. When
 	// handled, this is roughly equivalent to:
-	//
-	//  r.trk.Progress[r.id].MaybeUpdate(e.Index)
+	//领导者需要在刚刚附加的条目被持久保存后自行确认它们（因为它不会向自己发送 MsgApp）。
+	//此响应消息将被添加到 msgsAfterAppend 并在这些条目写入稳定存储后传递回此节点。处理时，这大致相当于：
+	// r.trk.Progress[r.id].MaybeUpdate(e.Index)
 	//  if r.maybeCommit() {
 	//  	r.bcastAppend()
 	//  }
@@ -1074,6 +1082,9 @@ func (r *raft) becomeLeader() {
 	r.logger.Infof("%x became leader at term %d", r.id, r.Term)
 }
 
+/*
+调用r.campaign(t)
+*/
 func (r *raft) hup(t CampaignType) {
 	if r.state == StateLeader {
 		r.logger.Debugf("%x ignoring MsgHup because already leader", r.id)
@@ -1126,6 +1137,25 @@ func (r *raft) hasUnappliedConfChanges() bool {
 
 // campaign transitions the raft instance to candidate state. This must only be
 // called after verifying that this is a legitimate transition.
+
+/*
+campaign 将 raft 实例转换为候选状态。
+1、必须满足r.promotable()
+2、
+if t == campaignPreElection
+
+	r.becomePreCandidate()
+	voteMsg = pb.MsgPreVote
+	term = r.Term + 1
+
+else
+
+	r.becomeCandidate()
+	voteMsg = pb.MsgVote
+	term = r.Term
+
+3、r.send(pb.Message{To: id, Term: term, Type: voteMsg, Index: last.index, LogTerm: last.term, Context: ctx})
+*/
 func (r *raft) campaign(t CampaignType) {
 	if !r.promotable() {
 		// This path should not be hit (callers are supposed to check), but
