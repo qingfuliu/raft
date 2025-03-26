@@ -513,7 +513,8 @@ func newRaft(c *Config) *raft {
 func (r *raft) hasLeader() bool { return r.lead != None }
 
 /*
- */
+lead state
+*/
 func (r *raft) softState() SoftState { return SoftState{Lead: r.lead, RaftState: r.state} }
 
 /*
@@ -766,6 +767,7 @@ func (r *raft) maybeSendSnapshot(to uint64, pr *tracker.Progress) bool {
 /*
 获取commit := min(pr.Match, r.raftLog.committed)，带上ctx
 发送给id为to的节点
+调用pr.SentCommit(commit)
 */
 func (r *raft) sendHeartbeat(to uint64, ctx []byte) {
 	pr := r.trk.Progress[to]
@@ -827,7 +829,7 @@ func (r *raft) bcastHeartbeatWithCtx(ctx []byte) {
 }
 
 /*
-将raftLog的applied调整为index.表示该节点应用index到状态机里
+将raftLog的applied调整为index，调整applying（可能需要增大）.表示该节点应用index到状态机里
 */
 func (r *raft) appliedTo(index uint64, size entryEncodingSize) {
 	oldApplied := r.raftLog.applied
@@ -864,7 +866,7 @@ func (r *raft) appliedTo(index uint64, size entryEncodingSize) {
 }
 
 /*
-首先调用r.raftLog.stableSnapTo(index)将快照持久化到存储，然后调用r.appliedTo(index,0）更新raftlog的appild索引
+首先调用r.raftLog.stableSnapTo(index)将快照持久化到存储，然后调用r.appliedTo(snap.Metadata.Index,0）更新raftlog的appild索引
 */
 func (r *raft) appliedSnap(snap *pb.Snapshot) {
 	index := snap.Metadata.Index
@@ -875,6 +877,10 @@ func (r *raft) appliedSnap(snap *pb.Snapshot) {
 // maybeCommit attempts to advance the commit index. Returns true if the commit
 // index changed (in which case the caller should call r.bcastAppend). This can
 // only be called in StateLeader.
+
+/*
+调整raftLog的    committed 到r.trk.Committed()     （大多数节点都承认的pr。match）
+*/
 func (r *raft) maybeCommit() bool {
 	defer traceCommit(r)
 
@@ -921,7 +927,9 @@ func (r *raft) reset(term uint64) {
 }
 
 /*
-将es append到非稳定存储中
+将es append到非稳定存储中        raftLog.append
+更新自己的pr（MaybeUpdate，更新match、next
+r.send(pb.Message{To: r.id, Type: pb.MsgAppResp, Index: li})
 */
 func (r *raft) appendEntry(es ...pb.Entry) (accepted bool) {
 	li := r.raftLog.lastIndex()
@@ -959,6 +967,10 @@ func (r *raft) appendEntry(es ...pb.Entry) (accepted bool) {
 }
 
 // tickElection is run by followers and candidates after r.electionTimeout.
+
+/*
+设置r.electionElapsed = 0，导致raft实例调用becomePreCandidate或becomeCandidate，并且给其他节点发送选举消息
+*/
 func (r *raft) tickElection() {
 	r.electionElapsed++
 
@@ -1042,6 +1054,9 @@ func (r *raft) becomePreCandidate() {
 	r.logger.Infof("%x became pre-candidate at term %d", r.id, r.Term)
 }
 
+/*
+更新term、相关回调、append一条空日志
+*/
 func (r *raft) becomeLeader() {
 	// TODO(xiangli) remove the panic when the raft implementation is stable
 	if r.state == StateFollower {
@@ -1083,6 +1098,7 @@ func (r *raft) becomeLeader() {
 }
 
 /*
+fowller 每个electionElapsed周期调用一次 pb.MsgHup，会从step触发hup
 调用r.campaign(t)
 */
 func (r *raft) hup(t CampaignType) {
@@ -1206,6 +1222,9 @@ func (r *raft) campaign(t CampaignType) {
 	}
 }
 
+/*
+更新投票状态，并且返回是否成功
+*/
 func (r *raft) poll(id uint64, t pb.MessageType, v bool) (granted int, rejected int, result quorum.VoteResult) {
 	if v {
 		r.logger.Infof("%x received %s from %x at term %d", r.id, t, id, r.Term)
@@ -1216,6 +1235,10 @@ func (r *raft) poll(id uint64, t pb.MessageType, v bool) (granted int, rejected 
 	return r.trk.TallyVotes()
 }
 
+/*
+首先走兜底逻辑，然后走对应的回调用
+兜底逻辑：
+*/
 func (r *raft) Step(m pb.Message) error {
 	traceReceiveMessage(r, &m)
 
@@ -1313,6 +1336,7 @@ func (r *raft) Step(m pb.Message) error {
 	}
 
 	switch m.Type {
+	// fowller 每个electionElapsed周期调用一次 pb.MsgHup
 	case pb.MsgHup:
 		if r.preVote {
 			r.hup(campaignPreElection)
@@ -1388,6 +1412,8 @@ func (r *raft) Step(m pb.Message) error {
 		}
 
 	default:
+		//leader 每一个electionTimeout周期调用一次MsgCheckQuorum
+		//leader 每一个heartbeatElapsed周期调用一次MsgBeat
 		err := r.step(r, m)
 		if err != nil {
 			return err
@@ -1402,8 +1428,10 @@ func stepLeader(r *raft, m pb.Message) error {
 	// These message types do not require any progress for m.From.
 	switch m.Type {
 	case pb.MsgBeat:
+		//leader 每一个electionTimeout周期调用一次MsgBeat
 		r.bcastHeartbeat()
 		return nil
+		//leader 每一个electionTimeout周期调用一次MsgCheckQuorum
 	case pb.MsgCheckQuorum:
 		if !r.trk.QuorumActive() {
 			r.logger.Warningf("%x stepped down to follower since quorum is not active", r.id)
@@ -1417,7 +1445,7 @@ func stepLeader(r *raft, m pb.Message) error {
 			}
 		})
 		return nil
-	case pb.MsgProp:
+	case pb.MsgProp: //客户端请求，有新的日志需要被提交,将新的日志append到日志中，并且广播
 		if len(m.Entries) == 0 {
 			r.logger.Panicf("%x stepped empty MsgProp", r.id)
 		}
@@ -1508,6 +1536,12 @@ func stepLeader(r *raft, m pb.Message) error {
 	}
 	switch m.Type {
 	case pb.MsgAppResp:
+		//接收到了日志复制回复的消息
+		/*
+				1.刷新对应节点的RecentActive
+				2.如果m.Reject，日志被拒绝了，那么减少next，重试append 优化
+			3.如果没有拒绝，将pr的状态转换为Replicate
+		*/
 		// NB: this code path is also hit from (*raft).advance, where the leader steps
 		// an MsgAppResp to acknowledge the appended entries in the last Ready.
 
@@ -1799,6 +1833,11 @@ func stepLeader(r *raft, m pb.Message) error {
 
 // stepCandidate is shared by StateCandidate and StatePreCandidate; the difference is
 // whether they respond to MsgVoteResp or MsgPreVoteResp.
+
+/*
+接收到除了MsgPreVoteResp或者MsgVoteResp之外的其他消息，都会调用becomeFollower，然后调用对应的handle
+如果收到了投票的回复，会成为leader（并且bcastAppend），或者变为真正的候选者参选（调用campaign）
+*/
 func stepCandidate(r *raft, m pb.Message) error {
 	// Only handle vote responses corresponding to our candidacy (while in
 	// StateCandidate, we may get stale MsgPreVoteResp messages in this term from
@@ -1844,6 +1883,10 @@ func stepCandidate(r *raft, m pb.Message) error {
 	return nil
 }
 
+/*
+pb.MsgProp：转发给lead
+pb.MsgApp、pb.MsgHeartbeat、pb.MsgSnap：重置选举过期时间、调用handleXXX
+*/
 func stepFollower(r *raft, m pb.Message) error {
 	switch m.Type {
 	case pb.MsgProp:
@@ -1917,6 +1960,11 @@ func logSliceFromMsgApp(m *pb.Message) logSlice {
 	}
 }
 
+/*
+如果a.prev.index < r.raftLog.committed，直接返回给leader消息
+r.raftLog.maybeAppend(a, m.Commit)，如果没有冲突，返回给leader mlastIndex
+如果有冲突，那么返回拒绝，并且给leader提示下一次应该发送的日志位置
+*/
 func (r *raft) handleAppendEntries(m pb.Message) {
 	// TODO(pav-kv): construct logSlice up the stack next to receiving the
 	// message, and validate it before taking any action (e.g. bumping term).
@@ -1961,11 +2009,18 @@ func (r *raft) handleAppendEntries(m pb.Message) {
 	})
 }
 
+/*
+更新Commit
+返回 MsgHeartbeatResp
+*/
 func (r *raft) handleHeartbeat(m pb.Message) {
 	r.raftLog.commitTo(m.Commit)
 	r.send(pb.Message{To: m.From, Type: pb.MsgHeartbeatResp, Context: m.Context})
 }
 
+/*
+调用r.restore(m.Snapshot)
+*/
 func (r *raft) handleSnapshot(m pb.Message) {
 	// MsgSnap messages should always carry a non-nil Snapshot, but err on the
 	// side of safety and treat a nil Snapshot as a zero-valued Snapshot.
@@ -1988,6 +2043,13 @@ func (r *raft) handleSnapshot(m pb.Message) {
 // restore recovers the state machine from a snapshot. It restores the log and the
 // configuration of state machine. If this method returns false, the snapshot was
 // ignored, either because it was obsolete or because of an error.
+
+/*
+如果r.raftLog.matchTerm(id)：
+1、更新不稳定日志为s
+2、更新config
+3、返回给leader
+*/
 func (r *raft) restore(s pb.Snapshot) bool {
 	if s.Metadata.Index <= r.raftLog.committed {
 		return false
@@ -2078,6 +2140,8 @@ func (r *raft) promotable() bool {
 	return pr != nil && !pr.IsLearner && !r.raftLog.hasNextOrInProgressSnapshot()
 }
 
+/*
+ */
 func (r *raft) applyConfChange(cc pb.ConfChangeV2) pb.ConfState {
 	cfg, trk, err := func() (tracker.Config, tracker.ProgressMap, error) {
 		changer := confchange.Changer{

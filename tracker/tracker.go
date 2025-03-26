@@ -25,6 +25,9 @@ import (
 
 // Config reflects the configuration tracked in a ProgressTracker.
 type Config struct {
+	/*
+		联合共识节点集合
+	*/
 	Voters quorum.JointConfig
 	// AutoLeave is true if the configuration is joint and a transition to the
 	// incoming configuration should be carried out automatically by Raft when
@@ -44,6 +47,8 @@ type Config struct {
 	// learner it can't be in either half of the joint config. This invariant
 	// simplifies the implementation since it allows peers to have clarity about
 	// its current role without taking into account joint consensus.
+
+	//Learners是当前的learner集合
 	Learners map[uint64]struct{}
 	// When we turn a voter into a learner during a joint consensus transition,
 	// we cannot add the learner directly when entering the joint state. This is
@@ -79,6 +84,9 @@ type Config struct {
 	// also a voter in the joint config. In this case, the learner is added
 	// right away when entering the joint configuration, so that it is caught up
 	// as soon as possible.
+
+	//LearnersNext是在joint consensus情况下，在离开joint configuration时需要新加入learner集合的节点。
+	//请注意，在联合配置中添加不是投票者的学习者时不使用 next_learners。在这种情况下，在进入联合配置时立即添加学习者，以便尽快赶上。
 	LearnersNext map[uint64]struct{}
 }
 
@@ -188,6 +196,10 @@ type matchAckIndexer map[uint64]*Progress
 var _ quorum.AckedIndexer = matchAckIndexer(nil)
 
 // AckedIndex implements IndexLookuper.
+
+/*
+返回 l[id].Match
+*/
 func (l matchAckIndexer) AckedIndex(id uint64) (quorum.Index, bool) {
 	pr, ok := l[id]
 	if !ok {
@@ -198,6 +210,10 @@ func (l matchAckIndexer) AckedIndex(id uint64) (quorum.Index, bool) {
 
 // Committed returns the largest log index known to be committed based on what
 // the voting members of the group have acknowledged.
+
+/*
+返回大多数节点都承认的pr。match
+*/
 func (p *ProgressTracker) Committed() uint64 {
 	return uint64(p.Voters.CommittedIndex(matchAckIndexer(p.Progress)))
 }
@@ -270,6 +286,10 @@ func (p *ProgressTracker) ResetVotes() {
 
 // RecordVote records that the node with the given id voted for this Raft
 // instance if v == true (and declined it otherwise).
+
+/*
+将投票结果保存在p.Votes[id]
+*/
 func (p *ProgressTracker) RecordVote(id uint64, v bool) {
 	_, ok := p.Votes[id]
 	if !ok {
@@ -279,6 +299,10 @@ func (p *ProgressTracker) RecordVote(id uint64, v bool) {
 
 // TallyVotes returns the number of granted and rejected Votes, and whether the
 // election outcome is known.
+
+/*
+返回成功的和拒绝的节点个数，并且返回是否成功
+*/
 func (p *ProgressTracker) TallyVotes() (granted int, rejected int, _ quorum.VoteResult) {
 	// Make sure to populate granted/rejected correctly even if the Votes slice
 	// contains members no longer part of the configuration. This doesn't really

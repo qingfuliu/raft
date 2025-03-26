@@ -358,6 +358,9 @@ func (l *raftLog) lastIndex() uint64 {
 	return i
 }
 
+/*
+更新committed到tocommit
+*/
 func (l *raftLog) commitTo(tocommit uint64) {
 	// never decrease commit
 	if l.committed < tocommit {
@@ -511,6 +514,9 @@ func (l *raftLog) matchTerm(id entryID) bool {
 	return t == id.term
 }
 
+/*
+如果能够match  at的term，那么更新l.committed = tocommit
+*/
 func (l *raftLog) maybeCommit(at entryID) bool {
 	// NB: term should never be 0 on a commit because the leader campaigned at
 	// least at term 1. But if it is 0 for some reason, we don't consider this a
@@ -522,6 +528,9 @@ func (l *raftLog) maybeCommit(at entryID) bool {
 	return false
 }
 
+/*
+将unstable直接替换为s
+*/
 func (l *raftLog) restore(s pb.Snapshot) {
 	l.logger.Infof("log [%s] starts to restore snapshot [index: %d, term: %d]", l, s.Metadata.Index, s.Metadata.Term)
 	l.committed = s.Metadata.Index

@@ -23,6 +23,8 @@ import (
 )
 
 // MajorityConfig is a set of IDs that uses majority quorums to make decisions.
+
+// 如果里面有对应的id，就证明该id给自己投过票
 type MajorityConfig map[uint64]struct{}
 
 func (c MajorityConfig) String() string {
@@ -115,6 +117,8 @@ func (c MajorityConfig) Slice() []uint64 {
 
 // CommittedIndex computes the committed index from those supplied via the
 // provided AckedIndexer (for the active config).
+
+// 在c里面存在，并且在l里面也存的的，就是投票过的。返回被大多数id承认的pr.match
 func (c MajorityConfig) CommittedIndex(l AckedIndexer) Index {
 	n := len(c)
 	if n == 0 {
@@ -164,6 +168,8 @@ func (c MajorityConfig) CommittedIndex(l AckedIndexer) Index {
 // a result indicating whether the vote is pending (i.e. neither a quorum of
 // yes/no has been reached), won (a quorum of yes has been reached), or lost (a
 // quorum of no has been reached).
+
+// 如果c中大多数节点早votes中的映射是true，那么投票成功
 func (c MajorityConfig) VoteResult(votes map[uint64]bool) VoteResult {
 	if len(c) == 0 {
 		// By convention, the elections on an empty config win. This comes in

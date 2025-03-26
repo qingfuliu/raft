@@ -48,6 +48,9 @@ type Changer struct {
 // (Section 4.3) corresponds to `C_{new,old}`.
 //
 // [1]: https://github.com/ongardie/dissertation/blob/master/online-trim.pdf
+
+/*
+ */
 func (c Changer) EnterJoint(autoLeave bool, ccs ...pb.ConfChangeSingle) (tracker.Config, tracker.ProgressMap, error) {
 	cfg, trk, err := c.checkAndCopy()
 	if err != nil {
@@ -273,6 +276,12 @@ func (c Changer) initProgress(cfg *tracker.Config, trk tracker.ProgressMap, id u
 // checkInvariants makes sure that the config and progress are compatible with
 // each other. This is used to check both what the Changer is initialized with,
 // as well as what it returns.
+
+/*
+1、cfg里面的id必须在trk中存在
+2、cfg.LearnersNext必须已经在cfg.Voters[1]中存在，并且不能是已经是learner的
+3、cfg.Learners必须不能再任何一个cfg.Voters存在
+*/
 func checkInvariants(cfg tracker.Config, trk tracker.ProgressMap) error {
 	// NB: intentionally allow the empty config. In production we'll never see a
 	// non-empty config (we prevent it from being created) but we will need to
@@ -334,6 +343,9 @@ func checkInvariants(cfg tracker.Config, trk tracker.ProgressMap) error {
 // checkAndCopy copies the tracker's config and progress map (deeply enough for
 // the purposes of the Changer) and returns those copies. It returns an error
 // if checkInvariants does.
+
+/*
+ */
 func (c Changer) checkAndCopy() (tracker.Config, tracker.ProgressMap, error) {
 	cfg := c.Tracker.Config.Clone()
 	trk := tracker.ProgressMap{}

@@ -48,6 +48,10 @@ type RawNode struct {
 // recommended that instead of calling Bootstrap, applications bootstrap their
 // state manually by setting up a Storage that has a first index > 1 and which
 // stores the desired ConfState as its InitialState.
+
+/*
+根据config新建一个raft结构体，然后初始化一下prevSoftSt和prevHardSt
+*/
 func NewRawNode(config *Config) (*RawNode, error) {
 	r := newRaft(config)
 	rn := &RawNode{
@@ -61,6 +65,10 @@ func NewRawNode(config *Config) (*RawNode, error) {
 }
 
 // Tick advances the internal logical clock by a single tick.
+
+/*
+rn.raft.tick() 也就是根据不同角色在不同周期做不同事情的会掉函数
+*/
 func (rn *RawNode) Tick() {
 	rn.raft.tick()
 }
@@ -80,6 +88,14 @@ func (rn *RawNode) TickQuiesced() {
 }
 
 // Campaign causes this RawNode to transition to candidate state.
+
+/*
+开始竞选
+
+	return rn.raft.Step(pb.Message{
+		Type: pb.MsgHup,
+	})
+*/
 func (rn *RawNode) Campaign() error {
 	return rn.raft.Step(pb.Message{
 		Type: pb.MsgHup,
@@ -87,6 +103,15 @@ func (rn *RawNode) Campaign() error {
 }
 
 // Propose proposes data be appended to the raft log.
+
+/*
+	return rn.raft.Step(pb.Message{
+		Type: pb.MsgProp,
+		From: rn.raft.id,
+		Entries: []pb.Entry{
+			{Data: data},
+		}})
+*/
 func (rn *RawNode) Propose(data []byte) error {
 	return rn.raft.Step(pb.Message{
 		Type: pb.MsgProp,
@@ -98,6 +123,9 @@ func (rn *RawNode) Propose(data []byte) error {
 
 // ProposeConfChange proposes a config change. See (Node).ProposeConfChange for
 // details.
+/*·
+pb.Message{Type: pb.MsgProp, Entries: []pb.Entry{{Type: typ, Data: data}}}, nil
+*/
 func (rn *RawNode) ProposeConfChange(cc pb.ConfChangeI) error {
 	m, err := confChangeToMsg(cc)
 	if err != nil {
@@ -115,6 +143,10 @@ func (rn *RawNode) ApplyConfChange(cc pb.ConfChangeI) *pb.ConfState {
 }
 
 // Step advances the state machine using the given message.
+
+/*
+rn.raft.Step(m)
+*/
 func (rn *RawNode) Step(m pb.Message) error {
 	// Ignore unexpected local messages receiving over network.
 	if IsLocalMsg(m.Type) && !IsLocalMsgTarget(m.From) {
@@ -138,6 +170,14 @@ func (rn *RawNode) Ready() Ready {
 
 // readyWithoutAccept returns a Ready. This is a read-only operation, i.e. there
 // is no obligation that the Ready must be handled.
+
+/*
+构造一个Ready，包含了
+1、最新的softState、hardState
+2、最新的没有持久化的快照hasNextUnstableSnapshot
+3、最新的需要处理的消息rd.Messages
+4、有需要持久化的日志 hasNextUnstableEnts、有需要提交的日志hasNextCommittedEnts
+*/
 func (rn *RawNode) readyWithoutAccept() Ready {
 	r := rn.raft
 
@@ -450,6 +490,13 @@ func (rn *RawNode) applyUnstableEntries() bool {
 }
 
 // HasReady called when RawNode user need to check if any Ready pending.
+/*
+1、softState 需要更新
+2、hardState 需要更新
+3、有需要持久化的快照 hasNextUnstableSnapshot
+4、有需要处理的消息r.msgs、r.msgsAfterAppend
+5、有需要持久化的日志 hasNextUnstableEnts、有需要提交的日志hasNextCommittedEnts
+*/
 func (rn *RawNode) HasReady() bool {
 	// TODO(nvanbenschoten): order these cases in terms of cost and frequency.
 	r := rn.raft

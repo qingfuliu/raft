@@ -53,6 +53,9 @@ type Ready struct {
 	// The current volatile state of a Node.
 	// SoftState will be nil if there is no update.
 	// It is not required to consume or store SoftState.
+	/*
+		易失性变量
+	*/
 	*SoftState
 
 	// The current state of a Node to be saved to stable storage BEFORE
@@ -63,6 +66,9 @@ type Ready struct {
 	// If async storage writes are enabled, this field does not need to be acted
 	// on immediately. It will be reflected in a MsgStorageAppend message in the
 	// Messages slice.
+	/*
+		非易失性变量
+	*/
 	pb.HardState
 
 	// ReadStates can be used for node to serve linearizable read requests locally
@@ -77,6 +83,9 @@ type Ready struct {
 	// If async storage writes are enabled, this field does not need to be acted
 	// on immediately. It will be reflected in a MsgStorageAppend message in the
 	// Messages slice.
+	/*
+		需要被保存在稳定存储中的条目
+	*/
 	Entries []pb.Entry
 
 	// Snapshot specifies the snapshot to be saved to stable storage.
@@ -84,6 +93,9 @@ type Ready struct {
 	// If async storage writes are enabled, this field does not need to be acted
 	// on immediately. It will be reflected in a MsgStorageAppend message in the
 	// Messages slice.
+	/*
+		需要被保存在稳定存储中的快照
+	*/
 	Snapshot pb.Snapshot
 
 	// CommittedEntries specifies entries to be committed to a
@@ -93,6 +105,9 @@ type Ready struct {
 	// If async storage writes are enabled, this field does not need to be acted
 	// on immediately. It will be reflected in a MsgStorageApply message in the
 	// Messages slice.
+	/*
+		已经存在了稳定存储中的需要被提交的条目
+	*/
 	CommittedEntries []pb.Entry
 
 	// Messages specifies outbound messages.
@@ -107,10 +122,14 @@ type Ready struct {
 	//
 	// If it contains a MsgSnap message, the application MUST report back to raft
 	// when the snapshot has been received or has failed by calling ReportSnapshot.
+	/*
+		需要被发送出去的消息
+	*/
 	Messages []pb.Message
 
 	// MustSync indicates whether the HardState and Entries must be durably
 	// written to disk or if a non-durable write is permissible.
+	//MustSync 指示 HardState 和 Entries 是否必须持久写入磁盘，或者是否允许非持久写入。
 	MustSync bool
 }
 
@@ -470,8 +489,7 @@ func (n *node) Tick() {
 /*
 1.本节点接要进行选举
 
-	*将m写入到node.recvc //接收来自其他raft节点的消息 的通道（接收客户端消息并且返回结果 的通道）
-	*接收m的error消息，等待
+	*将m写入到node.recvc //接收来自其他raft节点的消息 的通道
 */
 func (n *node) Campaign(ctx context.Context) error { return n.step(ctx, pb.Message{Type: pb.MsgHup}) }
 
@@ -504,6 +522,9 @@ func (n *node) Step(ctx context.Context, m pb.Message) error {
 	return n.step(ctx, m)
 }
 
+/*
+将confChange转化为一个消息
+*/
 func confChangeToMsg(c pb.ConfChangeI) (pb.Message, error) {
 	typ, data, err := pb.MarshalConfChange(c)
 	if err != nil {
@@ -636,7 +657,7 @@ func (n *node) Status() Status {
 
 /*
 *
-说明索引为id的node不通
+给recvc发送pb.Message{Type: pb.MsgUnreachable, From: id}:
 */
 func (n *node) ReportUnreachable(id uint64) {
 	select {
@@ -657,6 +678,7 @@ func (n *node) ReportSnapshot(id uint64, status SnapshotStatus) {
 /*
 *
 将领导权利从lead转让给transferee
+n.recvc <- pb.Message{Type: pb.MsgTransferLeader, From: transferee, To: lead}:
 */
 func (n *node) TransferLeadership(ctx context.Context, lead, transferee uint64) {
 	select {

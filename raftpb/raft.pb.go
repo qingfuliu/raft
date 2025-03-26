@@ -242,10 +242,10 @@ func (ConfChangeTransition) EnumDescriptor() ([]byte, []int) {
 type ConfChangeType int32
 
 const (
-	ConfChangeAddNode        ConfChangeType = 0
-	ConfChangeRemoveNode     ConfChangeType = 1
-	ConfChangeUpdateNode     ConfChangeType = 2
-	ConfChangeAddLearnerNode ConfChangeType = 3
+	ConfChangeAddNode        ConfChangeType = 0 //添加新节点
+	ConfChangeRemoveNode     ConfChangeType = 1 //移除节点
+	ConfChangeUpdateNode     ConfChangeType = 2 //用于状态机更新节点url等操作
+	ConfChangeAddLearnerNode ConfChangeType = 3 //添加learner节点
 )
 
 var ConfChangeType_name = map[int32]string{

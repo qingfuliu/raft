@@ -289,6 +289,8 @@ func (pr *Progress) SentEntries(entries int, bytes uint64) {
 
 // CanBumpCommit returns true if sending the given commit index can potentially
 // advance the follower's commit index.
+
+// index > pr.sentCommit && pr.sentCommit < pr.Next-1
 func (pr *Progress) CanBumpCommit(index uint64) bool {
 	// Sending the given commit index may bump the follower's commit index up to
 	// Next-1 in normal operation, or higher in some rare cases. Allow sending a
